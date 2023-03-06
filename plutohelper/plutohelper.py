@@ -226,3 +226,70 @@ def make_grids(d, config, **kwargs):
             #x = r*sin(th)*cos(x3);
             #y = r*sin(th)*sin(x3);
     return g
+
+
+def compute_vorticity(g, d, config, i_mid=None, deltai=0, normalize=True):
+    """computes vorticity for the given snapshot.
+    Uses
+    config.header.ROTATION = 'YES' | 'NO'
+    
+
+    Parameters
+    ----------
+    g : grid
+        Simple namespace with grid attributes
+    d : data
+        data name space
+    config : SimpleNamespace
+        cofiguration as read from pluto.log
+    i_mid : int, optional
+        which index in theta to plot, by default None
+    deltai : int, optional
+        how many cells around `i_mid` to average, by default 0
+    normalize : bool, optional
+        normalize by Keplerian vorticity, by default True
+
+    Returns
+    -------
+    ndarray
+        vorticity in z, possibly normalized by Keplerian
+    """
+    
+    if config.header.GEOMETRY.lower() != 'spherical':
+        raise ValueError('vorticity computation only implemented for 3D spherical only')
+        
+    if i_mid is None:
+        i_mid = d.rho.shape[1] // 2
+
+    # if mid plane is not a cell, we average the cells above and below the mid plane
+    if deltai==0 and (i_mid < i_mid / 2):
+        deltai = 1
+
+    # dx and dy between the grid cells
+    dr = g.r[2:] - g.r[:-2]
+    dphi = g.phi[2:] - g.phi[:-2]
+
+    # define frame rotation
+
+    if config.header.ROTATION == 'YES':
+        vphi_rot = g.r.copy()[:, None]
+    else:
+        vphi_rot = 0.0
+
+    # radial and phi velocity, use the mid-plane values
+
+    vr   = d.vx1[:, i_mid-deltai:i_mid + deltai + 1, :].mean(1)
+    vphi = d.vx3[:, i_mid-deltai:i_mid + deltai + 1, :].mean(1) + vphi_rot
+
+    # compute the first and second term in the brackets
+    first_term = (g.r[2:, None] * vphi[2:, 1:-1] - g.r[:-2, None] * vphi[:-2, 1:-1]) / dr[:, None]
+    second_term = (vr[1:-1, 2:] - vr[1:-1, :-2]) / dphi
+
+    # add them and divide by r
+    vort_z = (first_term + second_term) / g.r[1:-1, None]
+
+    # normalize to keplerian
+    if normalize:
+        vort_z = vort_z / (0.5 * g.r[1:-1]**-1.5)[:, None]
+        
+    return vort_z
